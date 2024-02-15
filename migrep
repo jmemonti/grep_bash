@@ -1,0 +1,183 @@
+#!/bin/bash
+
+verde_resaltado="\e[1;32m"
+rojo="\e[31m"
+amarillo="\e[1;33m" 
+reset="\e[0m"
+
+ayuda(){
+	echo "Modo de empleo: migrep [OPCIÓN]... PATRONES [FICHERO]..."
+	exit 1
+}
+
+
+leer_fichero_normal(){
+	fichero=$1
+	palabra=$2
+	while IFS= read -r linea; do
+		if [[ $linea == *$palabra* ]]; then
+			echo -e "$fichero:${linea//$palabra/${verde_resaltado}$palabra${reset}}"
+		fi
+	done < "$fichero"	
+}
+
+leer_fichero_i(){
+	fichero=$1
+	palabra=$2
+	while IFS= read -r linea; do
+		palabras_linea=($linea)
+		for palabras in ${palabras_linea[@]};do
+			if [[ $palabras == *$palabra* || $palabras == *${palabra^^}* ]]; then
+				linea_remplazada=${linea//$palabra/${verde_resaltado}$palabra${reset}}
+				linea_remplazada=${linea_remplazada//${palabra^^}/${verde_resaltado}${palabra^^}${reset}}
+				echo -e "$fichero:$linea_remplazada"
+				break
+			fi
+		done
+	done < "$fichero"	
+}
+
+leer_fichero_w(){
+	palabra=$2
+	fichero=$1
+	n_coincidencias=0
+	lista_lineas_con_coincidencias=()
+	while IFS= read -r linea; do
+		for palabras in $linea;do
+			#palabra coincidente
+			if [[ $palabras == $palabra ]]; then
+				lista_lineas_con_coincidencias+=(${verde_resaltado}$palabras${reset})
+				n_coincidencias=1			
+			else
+				lista_lineas_con_coincidencias+=($palabras)
+			fi
+		done
+
+		if [[ $n_coincidencias == 1 ]]; then
+			echo -e "$(pwd):${lista_lineas_con_coincidencias[@]}"
+		fi
+		#reseteamos la lista con 0 elementos y el n_coincidencias
+		lista_lineas_con_coincidencias=()
+		n_coincidencias=0
+
+	done < "$fichero"
+}
+
+leer_fichero_w_i(){
+	fichero=$1
+	palabra=$2
+	while IFS= read -r linea; do
+		palabras_linea=($linea)
+		for palabras in ${palabras_linea[@]};do
+			if [[ $palabras == [$palabra${palabra^^}] ]]; then
+				echo "$fichero:$linea"
+				break
+			fi
+		done
+	done < "$fichero"	
+}
+
+comprobar_fichero_directorio(){
+	archivo=$1
+	local palabra=$2
+	local w=$3
+	local i=$4
+	local R=$5
+	#si existe el archivo
+	if [[ -e $archivo ]]; then
+		#si es un fichero
+		if [[ -f $archivo ]]; then
+			#echo "$w $i $R"
+			if [[ $w == true && $i == true ]]; then
+				leer_fichero_w_i $archivo $palabra
+			fi
+
+			if [[ $w == true && $i == false ]]; then
+				leer_fichero_w $archivo $palabra
+			fi
+			if [[ $i == true && $w == false ]]; then
+				leer_fichero_i $archivo $palabra
+			fi
+
+			if [[ $w == false && $i == false ]]; then
+				leer_fichero_normal $archivo $palabra
+			fi	
+		fi
+		#si es un directorio
+		if [[ -d $archivo ]]; then
+			#si hay recursividad
+			if $R; then
+				cd $archivo
+				#recorres archivos del directorio
+				for archivos in $(ls); do
+					comprobar_fichero_directorio $archivos $palabra $w $i $R
+				done
+				cd ..
+			else
+				echo -e "${amarillo}migrep: $archivo: Es un directorio${reset}"
+			fi
+		fi
+	else
+		echo -e "${amarillo}migrep: $archivo: No existe el fichero o el directorio${reset}"
+	fi
+}
+
+main(){
+	todos_los_parametros=$@
+	lista_opciones=()
+	lista_ficheros=()
+	R=false
+	w=false
+	i=false
+
+	for parametro in $todos_los_parametros; do
+		#si el parametro empieza con un guión
+		if [[ ${parametro:0:1} == '-' ]]; then
+			lista_opciones+=(${parametro/-}) #sustituyes el - del parámetro por nada para quitarselo
+		else
+			lista_ficheros+=($parametro)
+		fi
+	done
+
+	#controlar que no haya solo opciones y que no haya ningún parámetro
+	if [[ ${#lista_ficheros} < 1 || $todos_los_parametros == 0 ]]; then
+		ayuda
+	fi
+
+	palabra=${lista_ficheros[0]}
+
+	#compruebas las opciones (funciona)
+	for opcion in ${lista_opciones[@]}; do
+		longitud=${#opcion}
+		#recorres cada caracter de cada parametro de opciones
+		for (( j = 0; j < $longitud; j++ )); do
+			case ${opcion:j:1} in
+				w)
+					w=true
+				;;
+				R|r)
+					R=true
+				;;
+				i)
+					i=true
+				;;
+				*)
+					ayuda
+				;;
+			esac
+		done 
+	done
+
+	#si hay solo una palabra como parámetro
+	if [[ ${#lista_ficheros[@]} < 2 ]]; then
+		lista_ficheros+=($(pwd))
+	fi
+	
+	##compruebas los ficheros
+	for fichero in ${lista_ficheros[@]:1};do #no cuentas la posición 0 que es la palabra, empiezas desde 1
+		comprobar_fichero_directorio $fichero $palabra $w $i $R
+	done
+}
+
+main $@
+
